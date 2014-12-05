@@ -36,6 +36,7 @@ import static rx.observables.StringObservable.split;
 import static rx.observables.StringObservable.using;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.FilterReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -55,6 +56,7 @@ import rx.Observable;
 import rx.Observer;
 import rx.functions.Func1;
 import rx.observables.StringObservable.UnsafeFunc0;
+import rx.Subscriber;
 import rx.observers.TestObserver;
 import rx.observers.TestSubscriber;
 
@@ -298,6 +300,72 @@ public class StringObservableTest {
     }
 
     @Test
+    public void testFromInputStreamWithBackpressureShouldTakeFourRequests() {
+        final byte[] inBytes = "tester".getBytes();
+        final ByteArrayOutputStream outBytes = new ByteArrayOutputStream();
+        final AtomicInteger requestCount = new AtomicInteger(0);
+        subscribeToInputStream(inBytes, 2, outBytes, 1, requestCount);
+        assertArrayEquals(inBytes, outBytes.toByteArray());
+        assertEquals(4, requestCount.get());
+    }
+
+    @Test
+    public void testFromInputStreamWithBackpressureRequestingMoreThanExist() {
+        final byte[] inBytes = "tester".getBytes();
+        final ByteArrayOutputStream outBytes = new ByteArrayOutputStream();
+        final AtomicInteger requestCount = new AtomicInteger(0);
+        subscribeToInputStream(inBytes, 32, outBytes, 200, requestCount);
+        assertArrayEquals(inBytes, outBytes.toByteArray());
+        assertEquals(2, requestCount.get());
+    }
+
+    @Test
+    public void testFromEmptyInputStreamWithBackpressure() {
+        final byte[] inBytes = "".getBytes();
+        final ByteArrayOutputStream outBytes = new ByteArrayOutputStream();
+        final AtomicInteger requestCount = new AtomicInteger(0);
+        subscribeToInputStream(inBytes, 32, outBytes, 1, requestCount);
+        assertArrayEquals(inBytes, outBytes.toByteArray());
+        assertEquals(1, requestCount.get());
+    }
+
+    private static void subscribeToInputStream(byte[] inBytes, int bufferSize,
+            final ByteArrayOutputStream outBytes, final int requestSize,
+            final AtomicInteger requestCount) {
+
+        from(new ByteArrayInputStream(inBytes), bufferSize).subscribe(
+                new Subscriber<byte[]>() {
+
+                    @Override
+                    public void onStart() {
+                        request(requestSize);
+                        requestCount.incrementAndGet();
+                    }
+
+                    @Override
+                    public void onCompleted() {
+
+                    }
+
+                    @Override
+                    public void onError(Throwable e) {
+                        throw new RuntimeException(e);
+                    }
+
+                    @Override
+                    public void onNext(byte[] t) {
+                        try {
+                            outBytes.write(t);
+                        } catch (IOException e) {
+                            throw new RuntimeException(e);
+                        }
+                        request(requestSize);
+                        requestCount.incrementAndGet();
+                    }
+                });
+    }
+    
+    @Test
     public void testFromReader() {
         final String inStr = "test";
         final String outStr = from(new StringReader(inStr)).toBlocking().single();
@@ -305,22 +373,22 @@ public class StringObservableTest {
         assertEquals(inStr, outStr);
     }
     
-	@Test
-	public void testFromReaderWillUnsubscribeBeforeCallingNextRead() {
-		final byte[] inBytes = "test".getBytes();
-		final AtomicInteger numReads = new AtomicInteger(0);
-		ByteArrayInputStream is = new ByteArrayInputStream(inBytes) {
+    @Test
+    public void testFromReaderWillUnsubscribeBeforeCallingNextRead() {
+        final byte[] inBytes = "test".getBytes();
+        final AtomicInteger numReads = new AtomicInteger(0);
+        ByteArrayInputStream is = new ByteArrayInputStream(inBytes) {
 
-			@Override
-			public synchronized int read(byte[] b, int off, int len) {
-				numReads.incrementAndGet();
-				return super.read(b, off, len);
-			}
-		};
-		StringObservable.from(new InputStreamReader(is)).first().toBlocking()
-				.single();
-		assertEquals(1, numReads.get());
-	}
+            @Override
+            public synchronized int read(byte[] b, int off, int len) {
+                numReads.incrementAndGet();
+                return super.read(b, off, len);
+            }
+        };
+        StringObservable.from(new InputStreamReader(is)).first().toBlocking()
+                .single();
+        assertEquals(1, numReads.get());
+    }
 
     @Test
     public void testByLine() {
